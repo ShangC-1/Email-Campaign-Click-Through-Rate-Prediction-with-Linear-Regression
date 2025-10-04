@@ -1,0 +1,465 @@
+---
+title: "STA 206 Final Project Code"
+author: "STA 206 | Fall 2024"
+date: "Nov. 19, 2024"
+output:
+  pdf_document: default
+  html_document: default
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r}
+# email <- read.csv('email/train_data.csv')
+email <- read.csv('train_data.csv')
+```
+
+```{r}
+# Check for number of missing values by column
+
+missing_values <- colSums(is.na(email))
+print(missing_values)
+```
+
+```{r}
+# Change categorical variables to factors
+email$times_of_day <- as.factor(email$times_of_day)
+email$sender <- as.factor(email$sender)
+email$category <- as.factor(email$category)
+email$product <- as.factor(email$product)
+email$target_audience <- as.factor(email$target_audience)
+email$day_of_week <- as.factor(email$day_of_week)
+email$is_personalised <- as.factor(email$is_personalised)
+email$is_discount <- as.factor(email$is_discount)
+email$is_urgency <- as.factor(email$is_urgency)
+email$is_weekend <- as.factor(email$is_weekend)
+
+# number of unique values in each column
+sapply(email, function(x) length(unique(x)))
+
+# remove `is_timer` from the dataset
+email <- email[, -which(names(email) == "is_timer")]
+
+# Delete `campaign_id` column
+email <- email[, -1]
+
+# Subset based on `email$click_rate` not equal to 0
+email_yes_click <- email[email$click_rate != 0, ]
+
+# Keep full dataset for later use
+email_full <- email
+```
+
+```{r}
+str(email)
+```
+
+```{r}
+# Illustrating issue with keeping `mail_full$click_rate` == 0
+
+email_full_added_noise <- email_full
+email_full_added_noise$click_rate <- email_full$click_rate + 0.0000000000001
+
+model1_added_noise <- lm(click_rate ~ ., data = email_full_added_noise)
+
+par(mfrow=c(1,3))
+plot(model1_added_noise, which=1)
+plot(model1_added_noise, which=2)
+boxplot(model1_added_noise$residuals, main="Residuals Boxplot")
+par(mfrow=c(1,1))
+
+library(MASS)
+boxcox(model1_added_noise)
+
+model2_added_noise <- lm(log(click_rate) ~ ., data = email_full_added_noise)
+par(mfrow=c(1,3))
+plot(model2_added_noise, which=1)
+plot(model2_added_noise, which=2)
+boxplot(model2_added_noise$residuals, main="Residuals Boxplot")
+par(mfrow=c(1,1))
+
+```
+
+We continue with non-zero `click_rate` data.
+
+## Splitting Train/Validation
+
+```{r}
+set.seed(100)
+n <- nrow(email_yes_click)
+ind <- sample(1:n, 0.8*n, replace=FALSE)
+train <- email_yes_click[ind, ] # training set
+valid <- email_yes_click[-ind, ] # validation/test set
+```
+
+```{r}
+# Subset numeric columns
+numeric_cols <- sapply(train, is.numeric)
+numeric_data <- train[, numeric_cols]
+
+# Calculate correlation
+cor_matrix <- cor(numeric_data)
+print(cor_matrix)
+```
+
+## Full Model
+
+```{r}
+model0 <- lm(click_rate ~ ., data = train) # full model
+summary(model0)
+
+par(mfrow=c(1,3))
+plot(model0, which=1)
+plot(model0, which=2)
+boxplot(model0$residuals, main="Residuals Boxplot")
+par(mfrow=c(1,1))
+
+boxcox(model0)
+```
+
+```{r}
+model1 <- lm(log(click_rate) ~ ., data = train)
+summary(model1)
+
+par(mfrow=c(1,3))
+plot(model1, which=1)
+plot(model1, which=2)
+boxplot(model1$residuals, main="Residuals Boxplot")
+par(mfrow=c(1,1))
+```
+
+## Check for Multicollinearity - before dropping any variables
+
+```{r, error=TRUE}
+library(car)
+
+vif(model1) # has error due to perfect multicollinearity between some variables (we suspect that `day_of_week` and `product` are causing this due to NA output in the summary)
+```
+
+## Remove perfectly correlated variables
+
+```{r}
+model2 <- lm(log(click_rate) ~ . -day_of_week - product, data = train)
+summary(model2)
+```
+
+```{r}
+vif(model2)
+```
+
+```{r}
+model3 <- lm(log(click_rate) ~ . -product -day_of_week -category, data = train)
+summary(model3)
+vif(model3)
+```
+
+```{r}
+# model4.1 <- lm(log(click_rate) ~ . -product -day_of_week -category -sender, data = train)
+# model4.2 <- lm(log(click_rate) ~ . -product -day_of_week -category -target_audience, data = train)
+# model4.3 <- lm(log(click_rate) ~ . -product -day_of_week -category -sender -target_audience, data = train)
+# 
+# anova(model4.1, model3)
+# anova(model4.2, model3)
+# anova(model4.3, model3)
+```
+
+```{r}
+# model4 <- model3
+```
+
+```{r}
+library(MASS)
+
+stepAIC(model3, scope=list(upper=model3, lower = ~1), direction="both", k=2, trace = FALSE)
+# stepAIC(model3, scope=list(upper=model3, lower = ~1), direction="backward", k=2, trace = FALSE)
+```
+
+```{r}
+model4 <- lm(log(click_rate) ~ . -product -day_of_week -category  -mean_paragraph_len -is_quote , data = train)
+
+summary(model4)
+
+model4.1 <- lm(log(click_rate) ~ . -product -day_of_week -category  -mean_paragraph_len -is_quote - no_of_CTA , data = train)
+model4.2 <- lm(log(click_rate) ~ . -product -day_of_week -category  -mean_paragraph_len -is_quote - is_image , data = train)
+model5 <- lm(log(click_rate) ~ . -product -day_of_week -category  -mean_paragraph_len -is_quote - no_of_CTA - is_image , data = train)
+
+anova(model4.1, model4)
+anova(model4.2, model4)
+anova(model5, model4)
+```
+
+```{r}
+summary(model5)
+
+par(mfrow=c(1,2))
+plot(model5, which=1)
+plot(model5, which=2)
+par(mfrow=c(1,2))
+boxplot(model5$residuals, main="Residuals Boxplot")
+plot(model5, which=4)
+par(mfrow=c(1,1))
+```
+
+```{r}
+model6 <- lm(log(click_rate) ~ 
+  sender + subject_len + body_len + is_weekend + times_of_day + no_of_CTA + 
+  mean_CTA_len + is_image + is_personalised + is_quote + is_emoticons + 
+  is_urgency + is_discount + is_price + target_audience +
+    
+  I(subject_len^2) + I(body_len^2) + I(no_of_CTA^2) + I(mean_CTA_len^2) + 
+  I(is_image^2) + I(is_quote^2) + I(is_emoticons^2) + I(is_price^2) + 
+  
+  sender:subject_len + sender:body_len + sender:no_of_CTA + sender:mean_CTA_len +    sender:is_emoticons + sender:is_price +
+  
+  subject_len:body_len + subject_len:is_weekend + subject_len:times_of_day +
+  subject_len:no_of_CTA + subject_len:mean_CTA_len + subject_len:is_image +
+  subject_len:is_quote + subject_len:is_emoticons + subject_len:is_urgency +
+  subject_len:is_discount + subject_len:is_price + subject_len:target_audience +
+  subject_len:is_personalised +
+  
+  body_len:is_weekend + body_len:times_of_day + body_len:no_of_CTA +
+  body_len:mean_CTA_len + body_len:is_image + body_len:is_quote +
+  body_len:is_emoticons + body_len:is_urgency + body_len:is_discount +
+  body_len:is_price + body_len:target_audience + body_len:is_personalised +
+  
+  is_weekend:no_of_CTA + is_weekend:mean_CTA_len +
+  is_weekend:is_image + is_weekend:is_quote + is_weekend:is_emoticons +
+  is_weekend:is_price +
+  
+  times_of_day:no_of_CTA + times_of_day:mean_CTA_len + times_of_day:is_image +
+  times_of_day:is_quote + times_of_day:is_emoticons + times_of_day:is_price +
+    
+  no_of_CTA:mean_CTA_len + no_of_CTA:is_image + no_of_CTA:is_quote +
+  no_of_CTA:is_emoticons + no_of_CTA:is_urgency + no_of_CTA:is_discount + 
+  no_of_CTA:is_price + no_of_CTA:target_audience + no_of_CTA:is_personalised +
+  
+  mean_CTA_len:is_image + mean_CTA_len:is_quote + mean_CTA_len:is_emoticons + 
+  mean_CTA_len:is_urgency + mean_CTA_len:is_discount +mean_CTA_len:is_price + 
+  mean_CTA_len:target_audience + mean_CTA_len:is_personalised +
+  
+  is_image:is_personalised + is_image:is_quote + is_image:is_emoticons + 
+  is_image:is_urgency + is_image:is_discount + is_image:is_price +
+  is_image:target_audience + 
+     
+  is_personalised:is_quote + is_personalised:is_emoticons + 
+  is_personalised:is_price +
+    
+  is_quote:is_emoticons + is_quote:is_urgency + is_quote:is_discount +
+  is_quote:is_price + is_quote:target_audience +
+  
+  is_emoticons:is_urgency + is_emoticons:is_discount + is_emoticons:is_price + 
+  is_emoticons:target_audience + 
+  
+  is_urgency:is_price + 
+    
+  is_discount:is_price + 
+  
+  is_price:target_audience,
+  
+  data = train)
+# In formal code, remove comments.
+# stepAIC(model6, scope=list(upper=model6, lower = ~1), direction="both", k=log(nrow(train)), trace = FALSE)
+# stepAIC(model6, scope=list(upper=model6, lower = ~1), direction="backward", k=log(nrow(train)), trace = FALSE)
+```
+
+```{r}
+model7 <- lm(formula = log(click_rate) ~ subject_len + body_len + times_of_day + 
+    no_of_CTA + is_emoticons + is_urgency + is_discount + target_audience + 
+    I(body_len^2) + I(no_of_CTA^2), data = train)
+summary(model7)
+```
+
+```{r}
+model8 <- lm(formula = log(click_rate) ~ subject_len + body_len + times_of_day + 
+    no_of_CTA + is_emoticons + is_urgency + is_discount + target_audience + 
+    I(body_len^2) + I(no_of_CTA^2) + sender + is_weekend + is_personalised + 
+    is_price, data = train)
+anova(model7,model8)
+summary(model8)
+```
+
+```{r}
+par(mfrow=c(1,2))
+plot(model7, which=1)
+plot(model7, which=2)
+par(mfrow=c(1,2))
+boxplot(model7$residuals, main="Residuals Boxplot")
+plot(model7, which=4)
+par(mfrow=c(1,1))
+```
+
+```{r}
+par(mfrow=c(1,2))
+plot(model8, which=1)
+plot(model8, which=2)
+par(mfrow=c(1,2))
+boxplot(model8$residuals, main="Residuals Boxplot")
+plot(model8, which=4)
+par(mfrow=c(1,1))
+```
+
+## Validation
+
+```{r}
+R2_list <- c()
+Ra2_list <- c()
+Cp_list <- c()
+p_list <- c()
+sigma2 <- sum(resid(model1)^2) / (nrow(train) - length(coef(model1)))
+AIC_list <- c()
+BIC_list <- c()
+Pressp_list <- c()
+MSE_list <- c()
+valid1 <- valid[c(-168,-139,-220),] #new category and product in validation set
+
+for (model in list(model3,model5,model7,model8)){
+  model.summary <- summary(model)
+  R2_list <- cbind(R2_list,model.summary$r.squared)
+  Ra2_list <- cbind(Ra2_list,model.summary$adj.r.squared)
+  Cp_list <- cbind(Cp_list,sum(resid(model)^2)/sigma2-(nrow(train)-2*length(coef(model))))
+  p_list <- cbind(p_list,length(coef(model)))
+  AIC_list <- cbind(AIC_list,nrow(train)*log(sum(resid(model)^2/nrow(train)))+2*length(coef(model)))
+  BIC_list <- cbind(BIC_list,nrow(train)*log(sum(resid(model)^2/nrow(train)))+log(nrow(train))*length(coef(model)))
+  Pressp_list <- cbind(Pressp_list,sum((resid(model)/(1-influence(model)$hat))^2))
+  MSE_list <- cbind(MSE_list,sum((valid1$click_rate - exp(predict(model,valid1)))^2)/(nrow(valid1)-length(coef(model))))
+}
+Cp_list <- rbind(Cp_list,p_list)
+print(R2_list)
+print(Ra2_list)
+print(Cp_list)
+print(AIC_list)
+print(BIC_list)
+print(Pressp_list)
+print(MSE_list)
+```
+
+## outlier
+
+```{r}
+hii <- function(model){
+e<-model$residuals ##ordinary residuals 
+h<-influence(model)$hat ##diagonals of the hat matrix: a.k.a. leverage values 
+de<-e/(1-h) ##deleted residuals 
+plot(e,de, xlab="residuals", ylab="deleted residuals")
+abline(0,1)
+return(na.de=which(is.infinite(de)))
+}
+hii(model3)
+hii(model5)
+hii(model7)
+hii(model8)
+
+train_clean <- train[c(-2,-1286),]
+model3_clean <- lm(log(click_rate) ~ . -product -day_of_week -category, data = train_clean)
+model5_clean <- lm(log(click_rate) ~ . -product -day_of_week -category  -mean_paragraph_len -is_quote - no_of_CTA - is_image , data = train_clean)
+model7_clean <- lm(formula = log(click_rate) ~ subject_len + body_len + times_of_day + 
+    no_of_CTA + is_emoticons + is_urgency + is_discount + target_audience + 
+    I(body_len^2) + I(no_of_CTA^2), data = train_clean)
+model8_clean <- lm(formula = log(click_rate) ~ subject_len + body_len + times_of_day + 
+    no_of_CTA + is_emoticons + is_urgency + is_discount + target_audience + 
+    I(body_len^2) + I(no_of_CTA^2) + sender + is_weekend + is_personalised + 
+    is_price, data = train_clean)
+
+
+```
+
+```{r}
+R2_list <- c()
+Ra2_list <- c()
+Cp_list <- c()
+p_list <- c()
+sigma2 <- sum(resid(lm(log(click_rate) ~ ., data = train_clean))^2) / (nrow(train) - length(coef(model1)))
+AIC_list <- c()
+BIC_list <- c()
+Pressp_list <- c()
+MSE_list <- c()
+valid1 <- valid[c(-168,-139,-220),] #new category and product in validation set
+
+for (model in list(model3_clean,model5_clean,model7_clean,model8_clean)){
+  model.summary <- summary(model)
+  R2_list <- cbind(R2_list,model.summary$r.squared)
+  Ra2_list <- cbind(Ra2_list,model.summary$adj.r.squared)
+  Cp_list <- cbind(Cp_list,sum(resid(model)^2)/sigma2-(nrow(train_clean)-2*length(coef(model))))
+  p_list <- cbind(p_list,length(coef(model)))
+  AIC_list <- cbind(AIC_list,nrow(train)*log(sum(resid(model)^2/nrow(train)))+2*length(coef(model)))
+  BIC_list <- cbind(BIC_list,nrow(train)*log(sum(resid(model)^2/nrow(train)))+log(nrow(train))*length(coef(model)))
+  Pressp_list <- cbind(Pressp_list,sum((resid(model)/(1-influence(model)$hat))^2))
+  MSE_list <- cbind(MSE_list,sum((valid1$click_rate - exp(predict(model,valid1)))^2)/(nrow(valid1)-length(coef(model))))
+}
+Cp_list <- rbind(Cp_list,p_list)
+print(R2_list)
+print(Ra2_list)
+print(Cp_list)
+print(AIC_list)
+print(BIC_list)
+print(Pressp_list)
+print(MSE_list)
+```
+```{r}
+library(MASS)
+for (model in list(model3_clean,model5_clean,model7_clean,model8_clean)){
+  stu.res.del <- studres(model)
+  print(head(sort(abs(stu.res.del), decreasing=TRUE)))
+  }
+qt(1-.5/(2*nrow(train_clean)), nrow(train_clean)-p_list-1) #Bonferroni's Threshold
+```
+```{r}
+for (model in list(model3_clean,model5_clean,model7_clean,model8_clean)){
+  # h <- influence(model)$hat
+  # p <- length(coef(model))
+  # print(sort(h[which(h>2*p/n)], decreasing = TRUE))
+  plot(model,which=4)
+}
+
+```
+```{r}
+train_clean2 <- train_clean[-635,]
+
+model3_clean2 <- lm(log(click_rate) ~ . -product -day_of_week -category, data = train_clean2)
+model5_clean2 <- lm(log(click_rate) ~ . -product -day_of_week -category  -mean_paragraph_len -is_quote - no_of_CTA - is_image , data = train_clean2)
+model7_clean2 <- lm(formula = log(click_rate) ~ subject_len + body_len + times_of_day + 
+    no_of_CTA + is_emoticons + is_urgency + is_discount + target_audience + 
+    I(body_len^2) + I(no_of_CTA^2), data = train_clean2)
+model8_clean2 <- lm(formula = log(click_rate) ~ subject_len + body_len + times_of_day + 
+    no_of_CTA + is_emoticons + is_urgency + is_discount + target_audience + 
+    I(body_len^2) + I(no_of_CTA^2) + sender + is_weekend + is_personalised + 
+    is_price, data = train_clean2)
+
+summary(model8_clean)
+summary(model8_clean2)
+```
+
+```{r}
+R2_list <- c()
+Ra2_list <- c()
+Cp_list <- c()
+p_list <- c()
+sigma2 <- sum(resid(lm(log(click_rate) ~ ., data = train_clean2))^2) / (nrow(train_clean2) - length(coef(model1)))
+AIC_list <- c()
+BIC_list <- c()
+Pressp_list <- c()
+MSE_list <- c()
+valid1 <- valid[c(-168,-139,-220),] #new category and product in validation set
+
+for (model in list(model3_clean2,model5_clean2,model7_clean2,model8_clean2)){
+  model.summary <- summary(model)
+  R2_list <- cbind(R2_list,model.summary$r.squared)
+  Ra2_list <- cbind(Ra2_list,model.summary$adj.r.squared)
+  Cp_list <- cbind(Cp_list,sum(resid(model)^2)/sigma2-(nrow(train_clean)-2*length(coef(model))))
+  p_list <- cbind(p_list,length(coef(model)))
+  AIC_list <- cbind(AIC_list,nrow(train)*log(sum(resid(model)^2/nrow(train)))+2*length(coef(model)))
+  BIC_list <- cbind(BIC_list,nrow(train)*log(sum(resid(model)^2/nrow(train)))+log(nrow(train))*length(coef(model)))
+  Pressp_list <- cbind(Pressp_list,sum((resid(model)/(1-influence(model)$hat))^2))
+  MSE_list <- cbind(MSE_list,sum((valid1$click_rate - exp(predict(model,valid1)))^2)/(nrow(valid1)-length(coef(model))))
+}
+Cp_list <- rbind(Cp_list,p_list)
+print(R2_list)
+print(Ra2_list)
+print(Cp_list)
+print(AIC_list)
+print(BIC_list)
+print(Pressp_list)
+print(MSE_list)
+```
+
